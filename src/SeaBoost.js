@@ -269,7 +269,7 @@ function init() {
     function makeBootstrapHTML() {
       var script = "(" + pageBootstrap.toString() + ")(" + JSON.stringify(configuredMax) + ");";
       return "<!doctype html><html><head><meta charset=\"utf-8\"></head><body><script>" +
-        script.replace(/<\\/script/gi, "<\\\\/script") +
+        script.replace(/<\/script/gi, "<\\/script") +
         "</script></body></html>";
     }
 
