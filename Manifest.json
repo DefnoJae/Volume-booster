@@ -1,11 +1,11 @@
 {
   "id": "SeaBoost",
   "name": "SeaBoost",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "manifestURI": "https://raw.githubusercontent.com/DefnoJae/Volume-booster/refs/heads/main/Manifest.json",
   "language": "typescript",
   "type": "plugin",
-  "description": "An embedded volume booster for Seanime's built-in media player with up to 300% gain.",
+  "description": "Extends Seanime's native volume control beyond 100% with a configurable maximum boost.",
   "author": "Jae",
   "icon": "https://raw.githubusercontent.com/DefnoJae/Volume-booster/refs/heads/main/assets/iccon.png",
   "website": "https://github.com/DefnoJae/Volume-booster",
@@ -15,8 +15,48 @@
   "plugin": {
     "version": "1",
     "permissions": {
-      "scopes": ["storage"]
+      "scopes": [
+        "storage"
+      ]
     }
   },
-  "isDevelopment": false
+  "isDevelopment": false,
+  "userConfig": {
+    "version": 1,
+    "requiresConfig": false,
+    "fields": [
+      {
+        "type": "select",
+        "name": "maxVolume",
+        "label": "Maximum volume",
+        "default": "300",
+        "options": [
+          {
+            "value": "150",
+            "label": "150%"
+          },
+          {
+            "value": "200",
+            "label": "200%"
+          },
+          {
+            "value": "250",
+            "label": "250%"
+          },
+          {
+            "value": "300",
+            "label": "300%"
+          },
+          {
+            "value": "400",
+            "label": "400%"
+          },
+          {
+            "value": "500",
+            "label": "500%"
+          }
+        ]
+      }
+    ]
+  }
 }
