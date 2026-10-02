@@ -1,1 +1,22 @@
-
+{
+  "id": "SeaBoost",
+  "name": "SeaBoost",
+  "version": "0.1.0",
+  "manifestURI": "https://raw.githubusercontent.com/DefnoJae/Volume-booster/refs/heads/main/Manifest.json",
+  "language": "typescript",
+  "type": "plugin",
+  "description": "An embedded volume booster for Seanime's built-in media player with up to 300% gain.",
+  "author": "Jae",
+  "icon": "",
+  "website": "https://github.com/DefnoJae/Volume-booster",
+  "readme": "https://github.com/DefnoJae/Volume-booster/blob/main/README.md",
+  "lang": "en",
+  "payloadURI": "https://raw.githubusercontent.com/DefnoJae/Volume-booster/refs/heads/main/src/SeaBoost.js",
+  "plugin": {
+    "version": "1",
+    "permissions": {
+      "scopes": ["storage"]
+    }
+  },
+  "isDevelopment": false
+}
