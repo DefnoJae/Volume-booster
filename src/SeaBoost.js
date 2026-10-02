@@ -8,7 +8,7 @@ function init() {
         var doc = host && host.document;
         if (!host || !doc) return;
 
-        var VERSION = "0.1.1";
+        var VERSION = "0.1.2";
         var ROOT_ID = "seaboost-player-control";
         var STYLE_ID = "seaboost-player-style";
         var STORAGE_KEY = "seaboost.level";
@@ -49,12 +49,11 @@ function init() {
           style.textContent =
             "#" + ROOT_ID + "{position:relative;height:100%;display:flex;align-items:center;justify-content:center;color:#fff;font-family:inherit;z-index:70}" +
             "#" + ROOT_ID + " *{box-sizing:border-box}" +
-            "#" + ROOT_ID + " .sb-trigger{height:2.25rem;min-width:3.7rem;border:0;background:transparent;color:#fff;display:flex;align-items:center;justify-content:center;gap:.3rem;padding:0 .45rem;border-radius:.5rem;cursor:pointer;font:600 .78rem/1 inherit;opacity:.92;transition:background .15s ease,opacity .15s ease,transform .15s ease}" +
+            "#" + ROOT_ID + " .sb-trigger{height:2.25rem;width:2.25rem;min-width:2.25rem;border:0;background:transparent;color:#fff;display:flex;align-items:center;justify-content:center;padding:0;border-radius:.5rem;cursor:pointer;opacity:.92;transition:background .15s ease,opacity .15s ease,transform .15s ease,color .18s ease,filter .18s ease}" +
             "#" + ROOT_ID + " .sb-trigger:hover,#" + ROOT_ID + ".sb-open .sb-trigger{background:rgba(255,255,255,.12);opacity:1}" +
             "#" + ROOT_ID + " .sb-trigger:active{transform:scale(.96)}" +
-            "#" + ROOT_ID + " .sb-bolt{font-size:.9rem;line-height:1}" +
-            "#" + ROOT_ID + " .sb-level{font-variant-numeric:tabular-nums;white-space:nowrap}" +
-            "#" + ROOT_ID + "[data-boosted=true] .sb-trigger{color:#f7c948}" +
+            "#" + ROOT_ID + " .sb-icon{display:flex;align-items:center;justify-content:center;line-height:1}" +
+            "#" + ROOT_ID + " .sb-icon svg{display:block;width:1.25rem;height:1.25rem}" +
             "#" + ROOT_ID + " .sb-panel{position:absolute;left:50%;bottom:calc(100% + .65rem);transform:translateX(-50%) translateY(.35rem);width:15rem;padding:.8rem;border:1px solid rgba(255,255,255,.13);border-radius:.8rem;background:rgba(14,14,18,.96);box-shadow:0 12px 36px rgba(0,0,0,.45);backdrop-filter:blur(14px);display:none;flex-direction:column;gap:.7rem;color:#fff}" +
             "#" + ROOT_ID + ".sb-open .sb-panel{display:flex;animation:sb-pop .14s ease-out forwards}" +
             "@keyframes sb-pop{from{opacity:0;transform:translateY(.3rem)}to{opacity:1;transform:translateY(0)}}" +
@@ -170,18 +169,38 @@ function init() {
           }
         }
 
+        function getBoostColor(boostLevel) {
+          var t = Math.max(0, Math.min(1, (boostLevel - 100) / 200));
+          var from = { r: 255, g: 255, b: 255 };
+          var to = { r: 247, g: 201, b: 72 };
+          var r = Math.round(from.r + (to.r - from.r) * t);
+          var g = Math.round(from.g + (to.g - from.g) * t);
+          var b = Math.round(from.b + (to.b - from.b) * t);
+          return "rgb(" + r + "," + g + "," + b + ")";
+        }
+
         function updateUI() {
           var root = doc.getElementById(ROOT_ID);
           if (!root) return;
 
           root.setAttribute("data-boosted", level > 100 ? "true" : "false");
 
-          var triggerLevel = root.querySelector(".sb-level");
           var readout = root.querySelector(".sb-readout");
           var slider = root.querySelector(".sb-slider");
-          if (triggerLevel) triggerLevel.textContent = String(level) + "%";
+          var trigger = root.querySelector(".sb-trigger");
+
           if (readout) readout.textContent = String(level) + "%";
           if (slider) slider.value = String(level);
+
+          if (trigger) {
+            var color = getBoostColor(level);
+            var glowAmount = Math.max(0, (level - 100) / 200);
+            trigger.style.color = color;
+            trigger.style.filter =
+              glowAmount > 0
+                ? "drop-shadow(0 0 " + (2 + glowAmount * 4) + "px rgba(247,201,72," + (0.18 + glowAmount * 0.25) + "))"
+                : "none";
+          }
 
           var presets = root.querySelectorAll(".sb-preset");
           for (var i = 0; i < presets.length; i++) {
@@ -213,7 +232,11 @@ function init() {
           root.setAttribute("data-error", "false");
           root.innerHTML =
             '<button class="sb-trigger" type="button" title="SeaBoost volume booster" aria-label="SeaBoost volume booster">' +
-              '<span class="sb-bolt" aria-hidden="true">⚡</span><span class="sb-level">' + String(level) + '%</span>' +
+              '<span class="sb-icon" aria-hidden="true">' +
+                '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" focusable="false">' +
+                  '<path fill-rule="evenodd" clip-rule="evenodd" d="M7.75 2.5h8.5A2.75 2.75 0 0 1 19 5.25v13.5a2.75 2.75 0 0 1-2.75 2.75h-8.5A2.75 2.75 0 0 1 5 18.75V5.25A2.75 2.75 0 0 1 7.75 2.5Zm4.25 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm0 5.5a4.75 4.75 0 1 0 0 9.5 4.75 4.75 0 0 0 0-9.5Zm0 2a2.75 2.75 0 1 1 0 5.5 2.75 2.75 0 0 1 0-5.5Z"/>' +
+                '</svg>' +
+              '</span>' +
             '</button>' +
             '<div class="sb-panel" role="dialog" aria-label="SeaBoost volume booster">' +
               '<div class="sb-head"><span class="sb-title">SeaBoost</span><span class="sb-readout">' + String(level) + '%</span></div>' +
