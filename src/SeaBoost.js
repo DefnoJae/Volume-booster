@@ -8,7 +8,7 @@ function init() {
         var doc = host && host.document;
         if (!host || !doc) return;
 
-        var VERSION = "0.1.2";
+        var VERSION = "0.1.3";
         var ROOT_ID = "seaboost-player-control";
         var STYLE_ID = "seaboost-player-style";
         var STORAGE_KEY = "seaboost.level";
@@ -49,11 +49,11 @@ function init() {
           style.textContent =
             "#" + ROOT_ID + "{position:relative;height:100%;display:flex;align-items:center;justify-content:center;color:#fff;font-family:inherit;z-index:70}" +
             "#" + ROOT_ID + " *{box-sizing:border-box}" +
-            "#" + ROOT_ID + " .sb-trigger{height:2.25rem;width:2.25rem;min-width:2.25rem;border:0;background:transparent;color:#fff;display:flex;align-items:center;justify-content:center;padding:0;border-radius:.5rem;cursor:pointer;opacity:.92;transition:background .15s ease,opacity .15s ease,transform .15s ease,color .18s ease,filter .18s ease}" +
+            "#" + ROOT_ID + " .sb-trigger{height:100%;width:2.35rem;min-width:2.35rem;border:0;background:transparent;color:#fff;display:flex;align-items:center;justify-content:center;padding:0 .25rem;border-radius:.5rem;cursor:pointer;opacity:.96;transition:background .15s ease,opacity .15s ease,transform .15s ease,color .18s ease,filter .18s ease}" +
             "#" + ROOT_ID + " .sb-trigger:hover,#" + ROOT_ID + ".sb-open .sb-trigger{background:rgba(255,255,255,.12);opacity:1}" +
             "#" + ROOT_ID + " .sb-trigger:active{transform:scale(.96)}" +
             "#" + ROOT_ID + " .sb-icon{display:flex;align-items:center;justify-content:center;line-height:1}" +
-            "#" + ROOT_ID + " .sb-icon svg{display:block;width:1.25rem;height:1.25rem}" +
+            "#" + ROOT_ID + " .sb-icon svg{display:block;width:1.65rem;height:1.65rem}" +
             "#" + ROOT_ID + " .sb-panel{position:absolute;left:50%;bottom:calc(100% + .65rem);transform:translateX(-50%) translateY(.35rem);width:15rem;padding:.8rem;border:1px solid rgba(255,255,255,.13);border-radius:.8rem;background:rgba(14,14,18,.96);box-shadow:0 12px 36px rgba(0,0,0,.45);backdrop-filter:blur(14px);display:none;flex-direction:column;gap:.7rem;color:#fff}" +
             "#" + ROOT_ID + ".sb-open .sb-panel{display:flex;animation:sb-pop .14s ease-out forwards}" +
             "@keyframes sb-pop{from{opacity:0;transform:translateY(.3rem)}to{opacity:1;transform:translateY(0)}}" +
@@ -296,14 +296,19 @@ function init() {
           if (!nativeVolume || !getVideo()) return false;
 
           var existing = doc.getElementById(ROOT_ID);
-          if (existing && existing.parentElement === nativeVolume.parentElement) {
+          if (existing && existing.parentElement === nativeVolume) {
             updateUI();
             return true;
           }
           if (existing) existing.remove();
 
           var root = buildControl();
-          nativeVolume.insertAdjacentElement("afterend", root);
+          var nativeSlider = nativeVolume.querySelector('[data-vc-element="control-volume-slider-container"]');
+          if (nativeSlider) {
+            nativeVolume.insertBefore(root, nativeSlider);
+          } else {
+            nativeVolume.appendChild(root);
+          }
 
           if (!documentPointerHandler) {
             documentPointerHandler = function (event) {
