@@ -8,7 +8,7 @@ function init() {
         var doc = host && host.document;
         if (!host || !doc) return;
 
-        var VERSION = "0.1.3";
+        var VERSION = "0.1.4";
         var ROOT_ID = "seaboost-player-control";
         var STYLE_ID = "seaboost-player-style";
         var STORAGE_KEY = "seaboost.level";
@@ -47,7 +47,7 @@ function init() {
           var style = doc.createElement("style");
           style.id = STYLE_ID;
           style.textContent =
-            "#" + ROOT_ID + "{position:relative;height:100%;display:flex;align-items:center;justify-content:center;color:#fff;font-family:inherit;z-index:70}" +
+            "#" + ROOT_ID + "{position:relative;height:100%;display:flex;align-items:center;justify-content:center;color:#fff;font-family:inherit;z-index:70;margin-left:-.5rem}" +
             "#" + ROOT_ID + " *{box-sizing:border-box}" +
             "#" + ROOT_ID + " .sb-trigger{height:100%;width:2.35rem;min-width:2.35rem;border:0;background:transparent;color:#fff;display:flex;align-items:center;justify-content:center;padding:0 .25rem;border-radius:.5rem;cursor:pointer;opacity:.96;transition:background .15s ease,opacity .15s ease,transform .15s ease,color .18s ease,filter .18s ease}" +
             "#" + ROOT_ID + " .sb-trigger:hover,#" + ROOT_ID + ".sb-open .sb-trigger{background:rgba(255,255,255,.12);opacity:1}" +
@@ -296,19 +296,14 @@ function init() {
           if (!nativeVolume || !getVideo()) return false;
 
           var existing = doc.getElementById(ROOT_ID);
-          if (existing && existing.parentElement === nativeVolume) {
+          if (existing && existing.previousElementSibling === nativeVolume) {
             updateUI();
             return true;
           }
           if (existing) existing.remove();
 
           var root = buildControl();
-          var nativeSlider = nativeVolume.querySelector('[data-vc-element="control-volume-slider-container"]');
-          if (nativeSlider) {
-            nativeVolume.insertBefore(root, nativeSlider);
-          } else {
-            nativeVolume.appendChild(root);
-          }
+          nativeVolume.insertAdjacentElement("afterend", root);
 
           if (!documentPointerHandler) {
             documentPointerHandler = function (event) {
