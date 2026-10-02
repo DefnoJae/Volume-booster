@@ -11,8 +11,13 @@ function init() {
         var doc = host && host.document;
         if (!host || !doc) return;
 
-        var VERSION = "0.2.1";
+        var VERSION = "0.2.2";
         var MARKER = "data-seaboost-native";
+        var STYLE_ID = "seaboost-native-slider-style";
+        var TRACK_CLASS = "sb-native-track";
+        var STORAGE_KEY = "seaboost.volumePercent";
+        var VOLUME_STEP = 10;
+
         maxVolume = parseInt(String(maxVolume), 10);
         if (!isFinite(maxVolume)) maxVolume = 300;
         maxVolume = Math.max(100, Math.min(500, maxVolume));
@@ -26,7 +31,19 @@ function init() {
           try { host.__seaboost.destroy(); } catch (_) {}
         }
 
+        function readSavedPercent() {
+          try {
+            var stored = parseFloat(host.localStorage.getItem(STORAGE_KEY));
+            if (isFinite(stored)) return Math.max(0, Math.min(maxVolume, stored));
+          } catch (_) {}
+          return null;
+        }
+
+        var savedPercent = readSavedPercent();
+        var currentPercent = savedPercent === null ? 100 : savedPercent;
+        var hasSavedPercent = savedPercent !== null;
         var currentVideo = null;
+        var currentVideoVolumeHandler = null;
         var audioContext = null;
         var sourceNode = null;
         var gainNode = null;
@@ -34,7 +51,7 @@ function init() {
         var bodyObserver = null;
         var mountQueued = false;
         var cleanupControl = null;
-        var currentPercent = 100;
+        var keyFlashTimer = null;
 
         function getVideo() {
           return doc.querySelector('video[data-vc-element="video"], video[data-video-core-element]');
@@ -44,8 +61,47 @@ function init() {
           return doc.querySelector('[data-vc-element="control-volume"]');
         }
 
+        function getSlider(control) {
+          return control ? control.querySelector('[data-vc-element="control-volume-slider"]') : null;
+        }
+
+        function ensureStyle() {
+          var style = doc.getElementById(STYLE_ID);
+          if (!style) {
+            style = doc.createElement("style");
+            style.id = STYLE_ID;
+            (doc.head || doc.documentElement).appendChild(style);
+          }
+
+          style.textContent =
+            '[data-vc-element="control-volume"][data-seaboost-native="1"] [data-vc-element="control-volume-slider-progress"],' +
+            '[data-vc-element="control-volume"][data-seaboost-native="1"] [data-vc-element="control-volume-slider-background"]{opacity:0!important}' +
+            '[data-vc-element="control-volume"][data-seaboost-native="1"] [data-vc-element="control-volume-slider"]{overflow:visible!important}' +
+            '.sb-native-track{position:absolute;inset:0;pointer-events:none;z-index:5;overflow:visible}' +
+            '.sb-native-line{position:absolute;left:0;right:0;top:50%;height:6px;transform:translateY(-50%);border-radius:999px;background:linear-gradient(90deg,#fff 0%,#fff var(--sb-normal-stop),#ffb84d var(--sb-gold-stop),#ff4d32 100%);box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)}' +
+            '.sb-native-dim{position:absolute;top:0;bottom:0;right:0;left:var(--sb-pos);border-radius:999px;background:rgba(10,10,12,.66);transition:left .08s linear}' +
+            '.sb-native-tick{position:absolute;top:50%;width:5px;height:5px;border-radius:999px;transform:translate(-50%,-50%);background:rgba(255,255,255,.48);box-shadow:0 0 0 1px rgba(0,0,0,.2);z-index:3}' +
+            '.sb-native-tick[data-reached="1"]{background:#fff}' +
+            '.sb-native-thumb{position:absolute;top:50%;left:var(--sb-pos);width:11px;height:11px;border-radius:999px;transform:translate(-50%,-50%);background:var(--sb-thumb-color,#fff);border:2px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.5);z-index:4;transition:left .08s linear,background .12s ease}' +
+            '.sb-native-readout{position:absolute;left:var(--sb-pos);bottom:19px;transform:translateX(-50%);padding:2px 5px;border-radius:5px;background:rgba(12,12,14,.94);border:1px solid rgba(255,255,255,.14);color:#fff;font:700 10px/1.25 ui-sans-serif,system-ui,sans-serif;white-space:nowrap;opacity:0;transition:opacity .12s ease,left .08s linear;z-index:6}' +
+            '[data-vc-element="control-volume"]:hover .sb-native-readout,' +
+            '[data-vc-element="control-volume"].sb-key-active .sb-native-readout{opacity:1}';
+        }
+
+        function savePercent() {
+          try { host.localStorage.setItem(STORAGE_KEY, String(Math.round(currentPercent))); } catch (_) {}
+          hasSavedPercent = true;
+        }
+
+        function removeVideoVolumeHandler() {
+          if (currentVideo && currentVideoVolumeHandler) {
+            try { currentVideo.removeEventListener("volumechange", currentVideoVolumeHandler); } catch (_) {}
+          }
+          currentVideoVolumeHandler = null;
+        }
+
         function resetAudioForNewVideo(video) {
-          if (currentVideo === video && gainNode && audioContext) return;
+          removeVideoVolumeHandler();
           if (sourceNode) { try { sourceNode.disconnect(); } catch (_) {} }
           if (gainNode) { try { gainNode.disconnect(); } catch (_) {} }
           if (compressorNode) { try { compressorNode.disconnect(); } catch (_) {} }
@@ -108,26 +164,125 @@ function init() {
           } catch (_) {}
         }
 
+        function getLevelColor(percent) {
+          if (percent <= 100) return "#ffffff";
+          var boostRange = Math.max(1, maxVolume - 100);
+          var t = Math.max(0, Math.min(1, (percent - 100) / boostRange));
+          var r = 255;
+          var g = Math.round(184 - (107 * t));
+          var b = Math.round(77 - (27 * t));
+          return "rgb(" + r + "," + g + "," + b + ")";
+        }
+
+        function buildTickValues() {
+          var values = [];
+          var value = 100;
+          while (value < maxVolume) {
+            values.push(value);
+            value += 100;
+          }
+          if (values.indexOf(maxVolume) === -1) values.push(maxVolume);
+          return values;
+        }
+
+        function ensureTrack(slider) {
+          if (!slider) return null;
+          var track = slider.querySelector("." + TRACK_CLASS);
+          if (track) return track;
+
+          track = doc.createElement("div");
+          track.className = TRACK_CLASS;
+
+          var line = doc.createElement("div");
+          line.className = "sb-native-line";
+
+          var dim = doc.createElement("div");
+          dim.className = "sb-native-dim";
+          line.appendChild(dim);
+
+          var ticks = buildTickValues();
+          for (var i = 0; i < ticks.length; i++) {
+            var tick = doc.createElement("span");
+            tick.className = "sb-native-tick";
+            tick.setAttribute("data-value", String(ticks[i]));
+            tick.style.left = ((ticks[i] / maxVolume) * 100) + "%";
+            line.appendChild(tick);
+          }
+
+          var thumb = doc.createElement("span");
+          thumb.className = "sb-native-thumb";
+
+          var readout = doc.createElement("span");
+          readout.className = "sb-native-readout";
+
+          track.appendChild(line);
+          track.appendChild(thumb);
+          track.appendChild(readout);
+          slider.appendChild(track);
+          return track;
+        }
+
+        function flashReadout() {
+          var control = getNativeVolumeControl();
+          if (!control) return;
+          control.classList.add("sb-key-active");
+          if (keyFlashTimer) host.clearTimeout(keyFlashTimer);
+          keyFlashTimer = host.setTimeout(function () {
+            control.classList.remove("sb-key-active");
+            keyFlashTimer = null;
+          }, 900);
+        }
+
         function updateProgress(percent) {
           var control = getNativeVolumeControl();
           if (!control) return;
-          var progress = control.querySelector('[data-vc-element="control-volume-slider-progress"]');
-          if (progress) {
-            var width = Math.max(0, Math.min(100, (percent / maxVolume) * 100));
-            progress.style.setProperty("width", width + "%", "important");
+          var slider = getSlider(control);
+          if (!slider) return;
+
+          var track = ensureTrack(slider);
+          if (!track) return;
+
+          var position = Math.max(0, Math.min(100, (percent / maxVolume) * 100));
+          var normalStop = Math.max(0, Math.min(100, (100 / maxVolume) * 100));
+          var goldStop = Math.max(normalStop, Math.min(100, (((maxVolume + 100) / 2) / maxVolume) * 100));
+          var color = getLevelColor(percent);
+
+          track.style.setProperty("--sb-pos", position + "%");
+          track.style.setProperty("--sb-normal-stop", normalStop + "%");
+          track.style.setProperty("--sb-gold-stop", goldStop + "%");
+          track.style.setProperty("--sb-thumb-color", color);
+
+          var readout = track.querySelector(".sb-native-readout");
+          if (readout) readout.textContent = Math.round(percent) + "%";
+
+          var ticks = track.querySelectorAll(".sb-native-tick");
+          for (var i = 0; i < ticks.length; i++) {
+            var value = parseInt(ticks[i].getAttribute("data-value") || "0", 10);
+            ticks[i].setAttribute("data-reached", percent >= value ? "1" : "0");
           }
-          var slider = control.querySelector('[data-vc-element="control-volume-slider"]');
-          if (slider) {
-            slider.setAttribute("title", "Volume: " + Math.round(percent) + "% (SeaBoost max " + maxVolume + "%)");
-            slider.setAttribute("aria-valuemin", "0");
-            slider.setAttribute("aria-valuemax", String(maxVolume));
-            slider.setAttribute("aria-valuenow", String(Math.round(percent)));
+
+          slider.setAttribute("role", "slider");
+          slider.setAttribute("tabindex", "0");
+          slider.setAttribute("aria-label", "Volume");
+          slider.setAttribute("aria-valuemin", "0");
+          slider.setAttribute("aria-valuemax", String(maxVolume));
+          slider.setAttribute("aria-valuenow", String(Math.round(percent)));
+          slider.setAttribute("aria-valuetext", Math.round(percent) + "%");
+          slider.setAttribute("title", "Volume: " + Math.round(percent) + "% (SeaBoost max " + maxVolume + "%)");
+
+          var button = control.querySelector('[data-vc-element="control-button"]');
+          if (button) {
+            if (percent > 100) button.style.setProperty("color", color, "important");
+            else button.style.removeProperty("color");
           }
         }
 
-        function applyPercent(percent) {
+        function applyPercent(percent, shouldSave) {
           var video = getVideo();
           if (!video) return;
+
+          percent = Math.max(0, Math.min(maxVolume, percent));
+          percent = Math.round(percent / VOLUME_STEP) * VOLUME_STEP;
           percent = Math.max(0, Math.min(maxVolume, percent));
           currentPercent = percent;
 
@@ -138,6 +293,8 @@ function init() {
             try { video.volume = 1; } catch (_) {}
             setGain(percent / 100);
           }
+
+          if (shouldSave !== false) savePercent();
           updateProgress(percent);
         }
 
@@ -148,9 +305,36 @@ function init() {
           return position * maxVolume;
         }
 
+        function attachVideo(video) {
+          if (!video) return;
+          if (currentVideo !== video) resetAudioForNewVideo(video);
+
+          currentVideoVolumeHandler = function () {
+            var expected = currentPercent <= 100 ? currentPercent / 100 : 1;
+            if (Math.abs(video.volume - expected) > 0.015) {
+              try { video.volume = expected; } catch (_) {}
+            }
+            updateProgress(currentPercent);
+          };
+          video.addEventListener("volumechange", currentVideoVolumeHandler);
+
+          if (!hasSavedPercent) {
+            currentPercent = Math.max(0, Math.min(100, Math.round((video.volume * 100) / VOLUME_STEP) * VOLUME_STEP));
+            savePercent();
+          }
+
+          applyPercent(currentPercent, false);
+        }
+
         function attachControl(control) {
           if (!control) return false;
-          if (control.getAttribute(MARKER) === "1") {
+          var slider = getSlider(control);
+          if (!slider) return false;
+
+          if (
+            control.getAttribute(MARKER) === "1" &&
+            slider.querySelector("." + TRACK_CLASS)
+          ) {
             updateProgress(currentPercent);
             return true;
           }
@@ -160,10 +344,9 @@ function init() {
             cleanupControl = null;
           }
 
-          var slider = control.querySelector('[data-vc-element="control-volume-slider"]');
-          if (!slider) return false;
-
+          ensureStyle();
           control.setAttribute(MARKER, "1");
+          ensureTrack(slider);
           var dragging = false;
 
           function onPointerDown(event) {
@@ -171,15 +354,16 @@ function init() {
             event.preventDefault();
             event.stopImmediatePropagation();
             dragging = true;
+            try { slider.focus(); } catch (_) {}
             try { slider.setPointerCapture(event.pointerId); } catch (_) {}
-            applyPercent(percentFromPointer(event, slider));
+            applyPercent(percentFromPointer(event, slider), true);
           }
 
           function onPointerMove(event) {
             if (!dragging) return;
             event.preventDefault();
             event.stopImmediatePropagation();
-            applyPercent(percentFromPointer(event, slider));
+            applyPercent(percentFromPointer(event, slider), true);
           }
 
           function onPointerUp(event) {
@@ -188,15 +372,15 @@ function init() {
             event.stopImmediatePropagation();
             dragging = false;
             try { slider.releasePointerCapture(event.pointerId); } catch (_) {}
-            applyPercent(percentFromPointer(event, slider));
+            applyPercent(percentFromPointer(event, slider), true);
           }
 
           function onWheel(event) {
             if (!control.contains(event.target)) return;
             event.preventDefault();
             event.stopImmediatePropagation();
-            var step = Math.max(2, Math.round(maxVolume / 100));
-            applyPercent(currentPercent + (event.deltaY < 0 ? step : -step));
+            applyPercent(currentPercent + (event.deltaY < 0 ? VOLUME_STEP : -VOLUME_STEP), true);
+            flashReadout();
           }
 
           slider.addEventListener("pointerdown", onPointerDown, true);
@@ -211,29 +395,52 @@ function init() {
             slider.removeEventListener("pointerup", onPointerUp, true);
             slider.removeEventListener("pointercancel", onPointerUp, true);
             control.removeEventListener("wheel", onWheel, true);
+            var track = slider.querySelector("." + TRACK_CLASS);
+            if (track) track.remove();
+            var button = control.querySelector('[data-vc-element="control-button"]');
+            if (button) button.style.removeProperty("color");
+            control.classList.remove("sb-key-active");
             control.removeAttribute(MARKER);
           };
 
-          var video = getVideo();
-          if (video) {
-            var nativePercent = Math.max(0, Math.min(100, video.volume * 100));
-            if (currentPercent <= 100) currentPercent = nativePercent;
-          }
           updateProgress(currentPercent);
           return true;
+        }
+
+        function onKeyDown(event) {
+          if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+
+          var target = event.target;
+          if (target) {
+            var tag = String(target.tagName || "").toLowerCase();
+            if (
+              tag === "input" ||
+              tag === "textarea" ||
+              tag === "select" ||
+              target.isContentEditable
+            ) return;
+          }
+
+          var video = getVideo();
+          if (!video || !video.isConnected) return;
+
+          event.preventDefault();
+          event.stopImmediatePropagation();
+
+          var delta = event.key === "ArrowUp" ? VOLUME_STEP : -VOLUME_STEP;
+          applyPercent(currentPercent + delta, true);
+          flashReadout();
         }
 
         function mount() {
           var video = getVideo();
           var control = getNativeVolumeControl();
           if (!video || !control) return false;
-          if (currentVideo && currentVideo !== video) {
-            resetAudioForNewVideo(video);
-            currentPercent = Math.max(0, Math.min(100, video.volume * 100));
-          } else if (!currentVideo) {
-            currentVideo = video;
-            currentPercent = Math.max(0, Math.min(100, video.volume * 100));
+
+          if (currentVideo !== video || !currentVideoVolumeHandler) {
+            attachVideo(video);
           }
+
           return attachControl(control);
         }
 
@@ -247,7 +454,11 @@ function init() {
           });
         }
 
-        bodyObserver = new host.MutationObserver(queueMount);
+        host.addEventListener("keydown", onKeyDown, true);
+
+        bodyObserver = new host.MutationObserver(function () {
+          queueMount();
+        });
         if (doc.body) bodyObserver.observe(doc.body, { childList: true, subtree: true });
 
         host.__seaboost = {
@@ -255,9 +466,16 @@ function init() {
           maxVolume: maxVolume,
           mount: mount,
           getLevel: function () { return currentPercent; },
+          setLevel: function (value) { applyPercent(value, true); },
           destroy: function () {
+            host.removeEventListener("keydown", onKeyDown, true);
+            if (keyFlashTimer) {
+              host.clearTimeout(keyFlashTimer);
+              keyFlashTimer = null;
+            }
             if (bodyObserver) { try { bodyObserver.disconnect(); } catch (_) {} }
             if (cleanupControl) { try { cleanupControl(); } catch (_) {} }
+            removeVideoVolumeHandler();
             resetAudioForNewVideo(null);
           }
         };
