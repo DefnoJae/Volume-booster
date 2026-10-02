@@ -11,7 +11,7 @@ function init() {
         var doc = host && host.document;
         if (!host || !doc) return;
 
-        var VERSION = "0.2.2";
+        var VERSION = "0.2.3";
         var MARKER = "data-seaboost-native";
         var STYLE_ID = "seaboost-native-slider-style";
         var TRACK_CLASS = "sb-native-track";
@@ -51,7 +51,6 @@ function init() {
         var bodyObserver = null;
         var mountQueued = false;
         var cleanupControl = null;
-        var keyFlashTimer = null;
 
         function getVideo() {
           return doc.querySelector('video[data-vc-element="video"], video[data-video-core-element]');
@@ -77,15 +76,15 @@ function init() {
             '[data-vc-element="control-volume"][data-seaboost-native="1"] [data-vc-element="control-volume-slider-progress"],' +
             '[data-vc-element="control-volume"][data-seaboost-native="1"] [data-vc-element="control-volume-slider-background"]{opacity:0!important}' +
             '[data-vc-element="control-volume"][data-seaboost-native="1"] [data-vc-element="control-volume-slider"]{overflow:visible!important}' +
-            '.sb-native-track{position:absolute;inset:0;pointer-events:none;z-index:5;overflow:visible}' +
+            '.sb-native-track{position:absolute;inset:0;pointer-events:none;z-index:5;overflow:visible;opacity:0;visibility:hidden;transition:opacity .1s ease}' +
             '.sb-native-line{position:absolute;left:0;right:0;top:50%;height:6px;transform:translateY(-50%);border-radius:999px;background:linear-gradient(90deg,#fff 0%,#fff var(--sb-normal-stop),#ffb84d var(--sb-gold-stop),#ff4d32 100%);box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)}' +
             '.sb-native-dim{position:absolute;top:0;bottom:0;right:0;left:var(--sb-pos);border-radius:999px;background:rgba(10,10,12,.66);transition:left .08s linear}' +
             '.sb-native-tick{position:absolute;top:50%;width:5px;height:5px;border-radius:999px;transform:translate(-50%,-50%);background:rgba(255,255,255,.48);box-shadow:0 0 0 1px rgba(0,0,0,.2);z-index:3}' +
             '.sb-native-tick[data-reached="1"]{background:#fff}' +
             '.sb-native-thumb{position:absolute;top:50%;left:var(--sb-pos);width:11px;height:11px;border-radius:999px;transform:translate(-50%,-50%);background:var(--sb-thumb-color,#fff);border:2px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.5);z-index:4;transition:left .08s linear,background .12s ease}' +
-            '.sb-native-readout{position:absolute;left:var(--sb-pos);bottom:19px;transform:translateX(-50%);padding:2px 5px;border-radius:5px;background:rgba(12,12,14,.94);border:1px solid rgba(255,255,255,.14);color:#fff;font:700 10px/1.25 ui-sans-serif,system-ui,sans-serif;white-space:nowrap;opacity:0;transition:opacity .12s ease,left .08s linear;z-index:6}' +
-            '[data-vc-element="control-volume"]:hover .sb-native-readout,' +
-            '[data-vc-element="control-volume"].sb-key-active .sb-native-readout{opacity:1}';
+            '.sb-native-readout{position:absolute;left:var(--sb-pos);bottom:19px;padding:2px 5px;border-radius:5px;background:rgba(12,12,14,.94);border:1px solid rgba(255,255,255,.14);color:#fff;font:700 10px/1.25 ui-sans-serif,system-ui,sans-serif;white-space:nowrap;opacity:0;transition:opacity .1s ease,left .06s linear;z-index:6}' +
+            '[data-vc-element="control-volume"]:hover .sb-native-track{opacity:1;visibility:visible}' +
+            '[data-vc-element="control-volume"]:hover .sb-native-readout{opacity:1}';
         }
 
         function savePercent() {
@@ -225,12 +224,9 @@ function init() {
         function flashReadout() {
           var control = getNativeVolumeControl();
           if (!control) return;
-          control.classList.add("sb-key-active");
-          if (keyFlashTimer) host.clearTimeout(keyFlashTimer);
-          keyFlashTimer = host.setTimeout(function () {
-            control.classList.remove("sb-key-active");
-            keyFlashTimer = null;
-          }, 900);
+          try {
+            if (control.matches(":hover")) updateProgress(currentPercent);
+          } catch (_) {}
         }
 
         function updateProgress(percent) {
@@ -253,7 +249,12 @@ function init() {
           track.style.setProperty("--sb-thumb-color", color);
 
           var readout = track.querySelector(".sb-native-readout");
-          if (readout) readout.textContent = Math.round(percent) + "%";
+          if (readout) {
+            readout.textContent = Math.round(percent) + "%";
+            if (position >= 88) readout.style.transform = "translateX(-100%)";
+            else if (position <= 12) readout.style.transform = "translateX(0)";
+            else readout.style.transform = "translateX(-50%)";
+          }
 
           var ticks = track.querySelectorAll(".sb-native-tick");
           for (var i = 0; i < ticks.length; i++) {
@@ -270,11 +271,7 @@ function init() {
           slider.setAttribute("aria-valuetext", Math.round(percent) + "%");
           slider.setAttribute("title", "Volume: " + Math.round(percent) + "% (SeaBoost max " + maxVolume + "%)");
 
-          var button = control.querySelector('[data-vc-element="control-button"]');
-          if (button) {
-            if (percent > 100) button.style.setProperty("color", color, "important");
-            else button.style.removeProperty("color");
-          }
+
         }
 
         function applyPercent(percent, shouldSave) {
@@ -284,6 +281,13 @@ function init() {
           percent = Math.max(0, Math.min(maxVolume, percent));
           percent = Math.round(percent / VOLUME_STEP) * VOLUME_STEP;
           percent = Math.max(0, Math.min(maxVolume, percent));
+
+          if (percent === currentPercent) {
+            if (shouldSave === true) savePercent();
+            updateProgress(percent);
+            return;
+          }
+
           currentPercent = percent;
 
           if (percent <= 100) {
@@ -356,14 +360,14 @@ function init() {
             dragging = true;
             try { slider.focus(); } catch (_) {}
             try { slider.setPointerCapture(event.pointerId); } catch (_) {}
-            applyPercent(percentFromPointer(event, slider), true);
+            applyPercent(percentFromPointer(event, slider), false);
           }
 
           function onPointerMove(event) {
             if (!dragging) return;
             event.preventDefault();
             event.stopImmediatePropagation();
-            applyPercent(percentFromPointer(event, slider), true);
+            applyPercent(percentFromPointer(event, slider), false);
           }
 
           function onPointerUp(event) {
@@ -397,8 +401,6 @@ function init() {
             control.removeEventListener("wheel", onWheel, true);
             var track = slider.querySelector("." + TRACK_CLASS);
             if (track) track.remove();
-            var button = control.querySelector('[data-vc-element="control-button"]');
-            if (button) button.style.removeProperty("color");
             control.classList.remove("sb-key-active");
             control.removeAttribute(MARKER);
           };
@@ -457,7 +459,18 @@ function init() {
         host.addEventListener("keydown", onKeyDown, true);
 
         bodyObserver = new host.MutationObserver(function () {
-          queueMount();
+          var video = getVideo();
+          var control = getNativeVolumeControl();
+          if (!video || !control) return;
+
+          var slider = getSlider(control);
+          var needsMount =
+            video !== currentVideo ||
+            control.getAttribute(MARKER) !== "1" ||
+            !slider ||
+            !slider.querySelector("." + TRACK_CLASS);
+
+          if (needsMount) queueMount();
         });
         if (doc.body) bodyObserver.observe(doc.body, { childList: true, subtree: true });
 
@@ -469,10 +482,6 @@ function init() {
           setLevel: function (value) { applyPercent(value, true); },
           destroy: function () {
             host.removeEventListener("keydown", onKeyDown, true);
-            if (keyFlashTimer) {
-              host.clearTimeout(keyFlashTimer);
-              keyFlashTimer = null;
-            }
             if (bodyObserver) { try { bodyObserver.disconnect(); } catch (_) {} }
             if (cleanupControl) { try { cleanupControl(); } catch (_) {} }
             removeVideoVolumeHandler();
