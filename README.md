@@ -10,6 +10,9 @@ SeaBoost extends Seanime's built-in volume control beyond the normal 100% limit 
 - Normal 0-100% volume behavior is preserved.
 - Above 100%, SeaBoost uses the Web Audio API for additional gain.
 - Dynamic compression is applied while boosted to reduce harsh clipping.
+- Adds visual percentage checkpoints and a live percentage readout to the native slider.
+- Up/Down arrow keys adjust SeaBoost in 10% steps.
+- Remembers the selected volume across previous/next episode changes and app refreshes.
 - Automatically reattaches when Seanime rerenders the player.
 
 ## Install
@@ -26,7 +29,7 @@ For example, with **Maximum volume = 300%**, the native slider represents 0-300%
 
 ## Usage
 
-Hover Seanime's normal speaker icon and use its volume slider as usual.
+Hover Seanime's normal speaker icon and use its volume slider as usual. The custom thumb and checkpoint dots show the extended range, and the exact percentage appears while you hover or use the keyboard.
 
 - **0-100%** = normal Seanime volume
 - **150%** = 1.5x gain
