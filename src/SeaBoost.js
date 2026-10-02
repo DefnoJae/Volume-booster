@@ -11,7 +11,7 @@ function init() {
         var doc = host && host.document;
         if (!host || !doc) return;
 
-        var VERSION = "0.2.0";
+        var VERSION = "0.2.1";
         var MARKER = "data-seaboost-native";
         maxVolume = parseInt(String(maxVolume), 10);
         if (!isFinite(maxVolume)) maxVolume = 300;
