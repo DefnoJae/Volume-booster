@@ -83,8 +83,10 @@ function init() {
             '.sb-native-tick[data-reached="1"]{background:#fff}' +
             '.sb-native-thumb{position:absolute;top:50%;left:var(--sb-pos);width:11px;height:11px;border-radius:999px;transform:translate(-50%,-50%);background:var(--sb-thumb-color,#fff);border:2px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.5);z-index:4;transition:left .08s linear,background .12s ease}' +
             '.sb-native-readout{position:absolute;left:var(--sb-pos);bottom:19px;padding:2px 5px;border-radius:5px;background:rgba(12,12,14,.94);border:1px solid rgba(255,255,255,.14);color:#fff;font:700 10px/1.25 ui-sans-serif,system-ui,sans-serif;white-space:nowrap;opacity:0;transition:opacity .1s ease,left .06s linear;z-index:6}' +
-            '[data-vc-element="control-volume"]:hover .sb-native-track{opacity:1;visibility:visible}' +
-            '[data-vc-element="control-volume"]:hover .sb-native-readout{opacity:1}';
+            '[data-vc-element="control-volume"]:hover .sb-native-track,' +
+            '[data-vc-element="control-volume"].sb-dragging .sb-native-track{opacity:1;visibility:visible}' +
+            '[data-vc-element="control-volume"]:hover .sb-native-readout,' +
+            '[data-vc-element="control-volume"].sb-dragging .sb-native-readout{opacity:1}';
         }
 
         function savePercent() {
@@ -358,7 +360,7 @@ function init() {
             event.preventDefault();
             event.stopImmediatePropagation();
             dragging = true;
-            try { slider.focus(); } catch (_) {}
+            control.classList.add("sb-dragging");
             try { slider.setPointerCapture(event.pointerId); } catch (_) {}
             applyPercent(percentFromPointer(event, slider), false);
           }
@@ -375,6 +377,7 @@ function init() {
             event.preventDefault();
             event.stopImmediatePropagation();
             dragging = false;
+            control.classList.remove("sb-dragging");
             try { slider.releasePointerCapture(event.pointerId); } catch (_) {}
             applyPercent(percentFromPointer(event, slider), true);
           }
@@ -402,6 +405,7 @@ function init() {
             var track = slider.querySelector("." + TRACK_CLASS);
             if (track) track.remove();
             control.classList.remove("sb-key-active");
+            control.classList.remove("sb-dragging");
             control.removeAttribute(MARKER);
           };
 
