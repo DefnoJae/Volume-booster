@@ -1,7 +1,6 @@
 function init() {
   $ui.register((ctx) => {
     const BOOTSTRAP_ATTR = "data-seaboost-bootstrap";
-    const CLIENT_VERSION = "0.1.0";
 
     function pageBootstrap() {
       (function () {
@@ -9,7 +8,7 @@ function init() {
         var doc = host && host.document;
         if (!host || !doc) return;
 
-        var VERSION = "0.1.0";
+        var VERSION = "0.1.1";
         var ROOT_ID = "seaboost-player-control";
         var STYLE_ID = "seaboost-player-style";
         var STORAGE_KEY = "seaboost.level";
@@ -355,8 +354,11 @@ function init() {
         ctx.setTimeout(async () => {
           try {
             var mounted = await ctx.dom.queryOne("#seaboost-player-control");
-            if (!mounted && ctx.videoCore.getPlaybackState()) {
-              ctx.toast.warning("SeaBoost could not attach to the player. Restart playback and send the Seanime log if it keeps happening.");
+            if (!mounted) {
+              var video = await ctx.dom.queryOne('video[data-vc-element="video"]');
+              if (video) {
+                ctx.toast.warning("SeaBoost could not attach to the player. Restart playback and send the Seanime log if it keeps happening.");
+              }
             }
           } catch (_) {}
         }, 1400);
@@ -370,7 +372,7 @@ function init() {
     async function ensureIfPlayerExists() {
       try {
         var video = await ctx.dom.queryOne('video[data-vc-element="video"]');
-        if (video || ctx.videoCore.getPlaybackState()) {
+        if (video) {
           await ensureBootstrap();
         }
       } catch (_) {}
@@ -384,12 +386,16 @@ function init() {
       ensureIfPlayerExists();
     });
 
-    ctx.videoCore.addEventListener("video-loaded", () => {
-      ensureBootstrap();
+    ctx.dom.observe('video[data-vc-element="video"]', (elements) => {
+      if (elements && elements.length) {
+        ensureBootstrap();
+      }
     });
 
-    ctx.videoCore.addEventListener("video-playback-state", () => {
-      ensureBootstrap();
+    ctx.dom.observe('[data-vc-element="control-volume"]', (elements) => {
+      if (elements && elements.length) {
+        ensureBootstrap();
+      }
     });
   });
 }
