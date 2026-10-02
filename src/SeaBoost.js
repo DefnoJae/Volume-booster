@@ -1,28 +1,30 @@
 function init() {
   $ui.register((ctx) => {
     const BOOTSTRAP_ATTR = "data-seaboost-bootstrap";
+    var configuredMax = parseInt($getUserPreference("maxVolume") || "300", 10);
+    if (!isFinite(configuredMax)) configuredMax = 300;
+    configuredMax = Math.max(100, Math.min(500, configuredMax));
 
-    function pageBootstrap() {
+    function pageBootstrap(maxVolume) {
       (function () {
         var host = window.parent;
         var doc = host && host.document;
         if (!host || !doc) return;
 
-        var VERSION = "0.1.4";
-        var ROOT_ID = "seaboost-player-control";
-        var STYLE_ID = "seaboost-player-style";
-        var STORAGE_KEY = "seaboost.level";
+        var VERSION = "0.2.0";
+        var MARKER = "data-seaboost-native";
+        maxVolume = parseInt(String(maxVolume), 10);
+        if (!isFinite(maxVolume)) maxVolume = 300;
+        maxVolume = Math.max(100, Math.min(500, maxVolume));
 
-        if (host.__seaboost && host.__seaboost.version === VERSION) {
-          try {
-            host.__seaboost.mount();
-          } catch (_) {}
+        if (host.__seaboost && host.__seaboost.version === VERSION && host.__seaboost.maxVolume === maxVolume) {
+          try { host.__seaboost.mount(); } catch (_) {}
           return;
         }
 
-        var level = parseInt(host.localStorage.getItem(STORAGE_KEY) || "100", 10);
-        if (!isFinite(level)) level = 100;
-        level = Math.max(100, Math.min(300, level));
+        if (host.__seaboost && host.__seaboost.destroy) {
+          try { host.__seaboost.destroy(); } catch (_) {}
+        }
 
         var currentVideo = null;
         var audioContext = null;
@@ -31,7 +33,8 @@ function init() {
         var compressorNode = null;
         var bodyObserver = null;
         var mountQueued = false;
-        var documentPointerHandler = null;
+        var cleanupControl = null;
+        var currentPercent = 100;
 
         function getVideo() {
           return doc.querySelector('video[data-vc-element="video"], video[data-video-core-element]');
@@ -41,62 +44,12 @@ function init() {
           return doc.querySelector('[data-vc-element="control-volume"]');
         }
 
-        function ensureStyle() {
-          if (doc.getElementById(STYLE_ID)) return;
-
-          var style = doc.createElement("style");
-          style.id = STYLE_ID;
-          style.textContent =
-            "#" + ROOT_ID + "{position:relative;height:100%;display:flex;align-items:center;justify-content:center;color:#fff;font-family:inherit;z-index:70;margin-left:-.5rem}" +
-            "#" + ROOT_ID + " *{box-sizing:border-box}" +
-            "#" + ROOT_ID + " .sb-trigger{height:100%;width:2.35rem;min-width:2.35rem;border:0;background:transparent;color:#fff;display:flex;align-items:center;justify-content:center;padding:0 .25rem;border-radius:.5rem;cursor:pointer;opacity:.96;transition:background .15s ease,opacity .15s ease,transform .15s ease,color .18s ease,filter .18s ease}" +
-            "#" + ROOT_ID + " .sb-trigger:hover,#" + ROOT_ID + ".sb-open .sb-trigger{background:rgba(255,255,255,.12);opacity:1}" +
-            "#" + ROOT_ID + " .sb-trigger:active{transform:scale(.96)}" +
-            "#" + ROOT_ID + " .sb-icon{display:flex;align-items:center;justify-content:center;line-height:1}" +
-            "#" + ROOT_ID + " .sb-icon svg{display:block;width:1.65rem;height:1.65rem}" +
-            "#" + ROOT_ID + " .sb-panel{position:absolute;left:50%;bottom:calc(100% + .65rem);transform:translateX(-50%) translateY(.35rem);width:15rem;padding:.8rem;border:1px solid rgba(255,255,255,.13);border-radius:.8rem;background:rgba(14,14,18,.96);box-shadow:0 12px 36px rgba(0,0,0,.45);backdrop-filter:blur(14px);display:none;flex-direction:column;gap:.7rem;color:#fff}" +
-            "#" + ROOT_ID + ".sb-open .sb-panel{display:flex;animation:sb-pop .14s ease-out forwards}" +
-            "@keyframes sb-pop{from{opacity:0;transform:translateY(.3rem)}to{opacity:1;transform:translateY(0)}}" +
-            "#" + ROOT_ID + " .sb-head{display:flex;align-items:center;justify-content:space-between;gap:.8rem}" +
-            "#" + ROOT_ID + " .sb-title{font-size:.82rem;font-weight:750;letter-spacing:.01em}" +
-            "#" + ROOT_ID + " .sb-readout{font-size:.78rem;font-weight:750;color:#f7c948;font-variant-numeric:tabular-nums}" +
-            "#" + ROOT_ID + " .sb-slider{width:100%;accent-color:#f7c948;cursor:pointer}" +
-            "#" + ROOT_ID + " .sb-scale{display:flex;justify-content:space-between;opacity:.55;font-size:.67rem;margin-top:-.4rem}" +
-            "#" + ROOT_ID + " .sb-presets{display:grid;grid-template-columns:repeat(5,1fr);gap:.3rem}" +
-            "#" + ROOT_ID + " .sb-preset{border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:#fff;border-radius:.45rem;padding:.36rem .2rem;font:650 .67rem/1 inherit;cursor:pointer}" +
-            "#" + ROOT_ID + " .sb-preset:hover{background:rgba(255,255,255,.13)}" +
-            "#" + ROOT_ID + " .sb-preset[data-active=true]{border-color:rgba(247,201,72,.6);background:rgba(247,201,72,.16);color:#f7c948}" +
-            "#" + ROOT_ID + " .sb-note{font-size:.65rem;line-height:1.35;opacity:.5}" +
-            "#" + ROOT_ID + " .sb-error{display:none;color:#ff8f8f;font-size:.66rem;line-height:1.35}" +
-            "#" + ROOT_ID + "[data-error=true] .sb-error{display:block}";
-
-          (doc.head || doc.documentElement).appendChild(style);
-        }
-
-        function setError(message) {
-          var root = doc.getElementById(ROOT_ID);
-          if (!root) return;
-          var error = root.querySelector(".sb-error");
-          root.setAttribute("data-error", message ? "true" : "false");
-          if (error) error.textContent = message || "";
-        }
-
         function resetAudioForNewVideo(video) {
           if (currentVideo === video && gainNode && audioContext) return;
-
-          if (sourceNode) {
-            try { sourceNode.disconnect(); } catch (_) {}
-          }
-          if (gainNode) {
-            try { gainNode.disconnect(); } catch (_) {}
-          }
-          if (compressorNode) {
-            try { compressorNode.disconnect(); } catch (_) {}
-          }
-          if (audioContext) {
-            try { audioContext.close(); } catch (_) {}
-          }
-
+          if (sourceNode) { try { sourceNode.disconnect(); } catch (_) {} }
+          if (gainNode) { try { gainNode.disconnect(); } catch (_) {} }
+          if (compressorNode) { try { compressorNode.disconnect(); } catch (_) {} }
+          if (audioContext) { try { audioContext.close(); } catch (_) {} }
           currentVideo = video;
           audioContext = null;
           sourceNode = null;
@@ -106,11 +59,7 @@ function init() {
 
         function ensureAudio() {
           var video = getVideo();
-          if (!video) {
-            setError("No Seanime video element was found.");
-            return false;
-          }
-
+          if (!video) return false;
           if (currentVideo !== video) resetAudioForNewVideo(video);
 
           if (gainNode && audioContext) {
@@ -121,10 +70,7 @@ function init() {
           }
 
           var AudioContextCtor = host.AudioContext || host.webkitAudioContext;
-          if (!AudioContextCtor) {
-            setError("Web Audio is unavailable in this Seanime client.");
-            return false;
-          }
+          if (!AudioContextCtor) return false;
 
           try {
             audioContext = new AudioContextCtor();
@@ -145,186 +91,150 @@ function init() {
             if (audioContext.state === "suspended") {
               audioContext.resume().catch(function () {});
             }
-
-            setError("");
             return true;
-          } catch (err) {
-            setError("Could not attach audio boost: " + (err && err.message ? err.message : String(err)));
+          } catch (_) {
             return false;
           }
         }
 
-        function applyLevel() {
-          var multiplier = level / 100;
+        function setGain(multiplier) {
+          if (multiplier > 1 && !ensureAudio()) return;
+          if (!gainNode || !audioContext) return;
+          try {
+            gainNode.gain.cancelScheduledValues(audioContext.currentTime);
+            gainNode.gain.setTargetAtTime(multiplier, audioContext.currentTime, 0.015);
+            compressorNode.ratio.value = multiplier > 1 ? 12 : 1;
+            compressorNode.threshold.value = multiplier > 1 ? -3 : 0;
+          } catch (_) {}
+        }
 
-          if (level > 100 && !ensureAudio()) return;
-
-          if (gainNode && audioContext) {
-            try {
-              gainNode.gain.cancelScheduledValues(audioContext.currentTime);
-              gainNode.gain.setTargetAtTime(multiplier, audioContext.currentTime, 0.015);
-              compressorNode.ratio.value = level > 100 ? 12 : 1;
-              compressorNode.threshold.value = level > 100 ? -3 : 0;
-            } catch (_) {}
+        function updateProgress(percent) {
+          var control = getNativeVolumeControl();
+          if (!control) return;
+          var progress = control.querySelector('[data-vc-element="control-volume-slider-progress"]');
+          if (progress) {
+            var width = Math.max(0, Math.min(100, (percent / maxVolume) * 100));
+            progress.style.setProperty("width", width + "%", "important");
+          }
+          var slider = control.querySelector('[data-vc-element="control-volume-slider"]');
+          if (slider) {
+            slider.setAttribute("title", "Volume: " + Math.round(percent) + "% (SeaBoost max " + maxVolume + "%)");
+            slider.setAttribute("aria-valuemin", "0");
+            slider.setAttribute("aria-valuemax", String(maxVolume));
+            slider.setAttribute("aria-valuenow", String(Math.round(percent)));
           }
         }
 
-        function getBoostColor(boostLevel) {
-          var t = Math.max(0, Math.min(1, (boostLevel - 100) / 200));
-          var from = { r: 255, g: 255, b: 255 };
-          var to = { r: 247, g: 201, b: 72 };
-          var r = Math.round(from.r + (to.r - from.r) * t);
-          var g = Math.round(from.g + (to.g - from.g) * t);
-          var b = Math.round(from.b + (to.b - from.b) * t);
-          return "rgb(" + r + "," + g + "," + b + ")";
+        function applyPercent(percent) {
+          var video = getVideo();
+          if (!video) return;
+          percent = Math.max(0, Math.min(maxVolume, percent));
+          currentPercent = percent;
+
+          if (percent <= 100) {
+            setGain(1);
+            try { video.volume = percent / 100; } catch (_) {}
+          } else {
+            try { video.volume = 1; } catch (_) {}
+            setGain(percent / 100);
+          }
+          updateProgress(percent);
         }
 
-        function updateUI() {
-          var root = doc.getElementById(ROOT_ID);
-          if (!root) return;
+        function percentFromPointer(event, slider) {
+          var rect = slider.getBoundingClientRect();
+          if (!rect.width) return currentPercent;
+          var position = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+          return position * maxVolume;
+        }
 
-          root.setAttribute("data-boosted", level > 100 ? "true" : "false");
-
-          var readout = root.querySelector(".sb-readout");
-          var slider = root.querySelector(".sb-slider");
-          var trigger = root.querySelector(".sb-trigger");
-
-          if (readout) readout.textContent = String(level) + "%";
-          if (slider) slider.value = String(level);
-
-          if (trigger) {
-            var color = getBoostColor(level);
-            var glowAmount = Math.max(0, (level - 100) / 200);
-            trigger.style.color = color;
-            trigger.style.filter =
-              glowAmount > 0
-                ? "drop-shadow(0 0 " + (2 + glowAmount * 4) + "px rgba(247,201,72," + (0.18 + glowAmount * 0.25) + "))"
-                : "none";
+        function attachControl(control) {
+          if (!control) return false;
+          if (control.getAttribute(MARKER) === "1") {
+            updateProgress(currentPercent);
+            return true;
           }
 
-          var presets = root.querySelectorAll(".sb-preset");
-          for (var i = 0; i < presets.length; i++) {
-            presets[i].setAttribute(
-              "data-active",
-              parseInt(presets[i].getAttribute("data-level") || "0", 10) === level ? "true" : "false"
-            );
+          if (cleanupControl) {
+            try { cleanupControl(); } catch (_) {}
+            cleanupControl = null;
           }
-        }
 
-        function setLevel(next) {
-          next = parseInt(String(next), 10);
-          if (!isFinite(next)) return;
-          level = Math.max(100, Math.min(300, next));
-          try { host.localStorage.setItem(STORAGE_KEY, String(level)); } catch (_) {}
-          updateUI();
-          applyLevel();
-        }
+          var slider = control.querySelector('[data-vc-element="control-volume-slider"]');
+          if (!slider) return false;
 
-        function closePanel() {
-          var root = doc.getElementById(ROOT_ID);
-          if (root) root.classList.remove("sb-open");
-        }
+          control.setAttribute(MARKER, "1");
+          var dragging = false;
 
-        function buildControl() {
-          var root = doc.createElement("div");
-          root.id = ROOT_ID;
-          root.setAttribute("data-boosted", level > 100 ? "true" : "false");
-          root.setAttribute("data-error", "false");
-          root.innerHTML =
-            '<button class="sb-trigger" type="button" title="SeaBoost volume booster" aria-label="SeaBoost volume booster">' +
-              '<span class="sb-icon" aria-hidden="true">' +
-                '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" focusable="false">' +
-                  '<path fill-rule="evenodd" clip-rule="evenodd" d="M7.75 2.5h8.5A2.75 2.75 0 0 1 19 5.25v13.5a2.75 2.75 0 0 1-2.75 2.75h-8.5A2.75 2.75 0 0 1 5 18.75V5.25A2.75 2.75 0 0 1 7.75 2.5Zm4.25 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm0 5.5a4.75 4.75 0 1 0 0 9.5 4.75 4.75 0 0 0 0-9.5Zm0 2a2.75 2.75 0 1 1 0 5.5 2.75 2.75 0 0 1 0-5.5Z"/>' +
-                '</svg>' +
-              '</span>' +
-            '</button>' +
-            '<div class="sb-panel" role="dialog" aria-label="SeaBoost volume booster">' +
-              '<div class="sb-head"><span class="sb-title">SeaBoost</span><span class="sb-readout">' + String(level) + '%</span></div>' +
-              '<input class="sb-slider" type="range" min="100" max="300" step="10" value="' + String(level) + '" aria-label="Volume boost percentage">' +
-              '<div class="sb-scale"><span>100%</span><span>200%</span><span>300%</span></div>' +
-              '<div class="sb-presets">' +
-                '<button class="sb-preset" type="button" data-level="100">100</button>' +
-                '<button class="sb-preset" type="button" data-level="150">150</button>' +
-                '<button class="sb-preset" type="button" data-level="200">200</button>' +
-                '<button class="sb-preset" type="button" data-level="250">250</button>' +
-                '<button class="sb-preset" type="button" data-level="300">300</button>' +
-              '</div>' +
-              '<div class="sb-note">Boosts Seanime audio above the normal 100% limit. Higher levels may sound different depending on the source.</div>' +
-              '<div class="sb-error"></div>' +
-            '</div>';
-
-          root.addEventListener("click", function (event) {
-            event.stopPropagation();
-          });
-          root.addEventListener("pointerdown", function (event) {
-            event.stopPropagation();
-          });
-          root.addEventListener("wheel", function (event) {
-            event.stopPropagation();
-          });
-
-          var trigger = root.querySelector(".sb-trigger");
-          var slider = root.querySelector(".sb-slider");
-          var presets = root.querySelectorAll(".sb-preset");
-
-          trigger.addEventListener("click", function (event) {
+          function onPointerDown(event) {
+            if (!slider.contains(event.target)) return;
             event.preventDefault();
-            event.stopPropagation();
-            root.classList.toggle("sb-open");
-            if (level > 100) applyLevel();
-          });
-
-          slider.addEventListener("input", function (event) {
-            setLevel(event.target.value);
-          });
-
-          for (var i = 0; i < presets.length; i++) {
-            presets[i].addEventListener("click", function (event) {
-              event.preventDefault();
-              setLevel(event.currentTarget.getAttribute("data-level"));
-            });
+            event.stopImmediatePropagation();
+            dragging = true;
+            try { slider.setPointerCapture(event.pointerId); } catch (_) {}
+            applyPercent(percentFromPointer(event, slider));
           }
 
-          updateUI();
-          return root;
+          function onPointerMove(event) {
+            if (!dragging) return;
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            applyPercent(percentFromPointer(event, slider));
+          }
+
+          function onPointerUp(event) {
+            if (!dragging) return;
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            dragging = false;
+            try { slider.releasePointerCapture(event.pointerId); } catch (_) {}
+            applyPercent(percentFromPointer(event, slider));
+          }
+
+          function onWheel(event) {
+            if (!control.contains(event.target)) return;
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            var step = Math.max(2, Math.round(maxVolume / 100));
+            applyPercent(currentPercent + (event.deltaY < 0 ? step : -step));
+          }
+
+          slider.addEventListener("pointerdown", onPointerDown, true);
+          slider.addEventListener("pointermove", onPointerMove, true);
+          slider.addEventListener("pointerup", onPointerUp, true);
+          slider.addEventListener("pointercancel", onPointerUp, true);
+          control.addEventListener("wheel", onWheel, { capture: true, passive: false });
+
+          cleanupControl = function () {
+            slider.removeEventListener("pointerdown", onPointerDown, true);
+            slider.removeEventListener("pointermove", onPointerMove, true);
+            slider.removeEventListener("pointerup", onPointerUp, true);
+            slider.removeEventListener("pointercancel", onPointerUp, true);
+            control.removeEventListener("wheel", onWheel, true);
+            control.removeAttribute(MARKER);
+          };
+
+          var video = getVideo();
+          if (video) {
+            var nativePercent = Math.max(0, Math.min(100, video.volume * 100));
+            if (currentPercent <= 100) currentPercent = nativePercent;
+          }
+          updateProgress(currentPercent);
+          return true;
         }
 
         function mount() {
-          ensureStyle();
-
-          var nativeVolume = getNativeVolumeControl();
-          if (!nativeVolume || !getVideo()) return false;
-
-          var existing = doc.getElementById(ROOT_ID);
-          if (existing && existing.previousElementSibling === nativeVolume) {
-            updateUI();
-            return true;
+          var video = getVideo();
+          var control = getNativeVolumeControl();
+          if (!video || !control) return false;
+          if (currentVideo && currentVideo !== video) {
+            resetAudioForNewVideo(video);
+            currentPercent = Math.max(0, Math.min(100, video.volume * 100));
+          } else if (!currentVideo) {
+            currentVideo = video;
+            currentPercent = Math.max(0, Math.min(100, video.volume * 100));
           }
-          if (existing) existing.remove();
-
-          var root = buildControl();
-          nativeVolume.insertAdjacentElement("afterend", root);
-
-          if (!documentPointerHandler) {
-            documentPointerHandler = function (event) {
-              var currentRoot = doc.getElementById(ROOT_ID);
-              if (currentRoot && !currentRoot.contains(event.target)) closePanel();
-            };
-            doc.addEventListener("pointerdown", documentPointerHandler, true);
-          }
-
-          if (level > 100) {
-            var video = getVideo();
-            if (video) {
-              var resume = function () {
-                applyLevel();
-                video.removeEventListener("play", resume);
-              };
-              video.addEventListener("play", resume);
-            }
-          }
-
-          return true;
+          return attachControl(control);
         }
 
         function queueMount() {
@@ -333,22 +243,23 @@ function init() {
           host.requestAnimationFrame(function () {
             mountQueued = false;
             mount();
+            updateProgress(currentPercent);
           });
         }
 
-        bodyObserver = new host.MutationObserver(function () {
-          queueMount();
-        });
-
-        if (doc.body) {
-          bodyObserver.observe(doc.body, { childList: true, subtree: true });
-        }
+        bodyObserver = new host.MutationObserver(queueMount);
+        if (doc.body) bodyObserver.observe(doc.body, { childList: true, subtree: true });
 
         host.__seaboost = {
           version: VERSION,
+          maxVolume: maxVolume,
           mount: mount,
-          setLevel: setLevel,
-          getLevel: function () { return level; }
+          getLevel: function () { return currentPercent; },
+          destroy: function () {
+            if (bodyObserver) { try { bodyObserver.disconnect(); } catch (_) {} }
+            if (cleanupControl) { try { cleanupControl(); } catch (_) {} }
+            resetAudioForNewVideo(null);
+          }
         };
 
         mount();
@@ -356,9 +267,9 @@ function init() {
     }
 
     function makeBootstrapHTML() {
-      var script = "(" + pageBootstrap.toString() + ")();";
+      var script = "(" + pageBootstrap.toString() + ")(" + JSON.stringify(configuredMax) + ");";
       return "<!doctype html><html><head><meta charset=\"utf-8\"></head><body><script>" +
-        script.replace(/<\/script/gi, "<\\/script") +
+        script.replace(/<\\/script/gi, "<\\\\/script") +
         "</script></body></html>";
     }
 
@@ -376,49 +287,32 @@ function init() {
 
         ctx.setTimeout(async () => {
           try {
-            var mounted = await ctx.dom.queryOne("#seaboost-player-control");
+            var mounted = await ctx.dom.queryOne('[data-vc-element="control-volume"][data-seaboost-native="1"]');
             if (!mounted) {
               var video = await ctx.dom.queryOne('video[data-vc-element="video"]');
-              if (video) {
-                ctx.toast.warning("SeaBoost could not attach to the player. Restart playback and send the Seanime log if it keeps happening.");
-              }
+              if (video) ctx.toast.warning("SeaBoost could not extend Seanime's volume slider.");
             }
           } catch (_) {}
         }, 1400);
-      } catch (err) {
-        try {
-          ctx.toast.error("SeaBoost failed to initialize.");
-        } catch (_) {}
+      } catch (_) {
+        try { ctx.toast.error("SeaBoost failed to initialize."); } catch (_) {}
       }
     }
 
     async function ensureIfPlayerExists() {
       try {
         var video = await ctx.dom.queryOne('video[data-vc-element="video"]');
-        if (video) {
-          await ensureBootstrap();
-        }
+        if (video) await ensureBootstrap();
       } catch (_) {}
     }
 
-    ctx.dom.onReady(() => {
-      ensureIfPlayerExists();
-    });
-
-    ctx.dom.onMainTabReady(() => {
-      ensureIfPlayerExists();
-    });
-
+    ctx.dom.onReady(() => { ensureIfPlayerExists(); });
+    ctx.dom.onMainTabReady(() => { ensureIfPlayerExists(); });
     ctx.dom.observe('video[data-vc-element="video"]', (elements) => {
-      if (elements && elements.length) {
-        ensureBootstrap();
-      }
+      if (elements && elements.length) ensureBootstrap();
     });
-
     ctx.dom.observe('[data-vc-element="control-volume"]', (elements) => {
-      if (elements && elements.length) {
-        ensureBootstrap();
-      }
+      if (elements && elements.length) ensureBootstrap();
     });
   });
 }
