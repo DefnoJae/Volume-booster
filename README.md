@@ -1,10 +1,12 @@
 # SeaBoost
 
-SeaBoost extends Seanime's built-in volume control beyond the normal 100% limit without adding a second player control.
+SeaBoost extends Seanime's built-in volume control beyond the normal 100% limit without adding a second player control. It supports both Seanime VideoCore playback and MpvCore/torrent playback.
 
 ## Features
 
 - Uses Seanime's **existing speaker button and volume slider**.
+- Works with **online streaming and torrent streaming**.
+- Uses Web Audio gain for VideoCore and mpv's native software amplification for MpvCore.
 - Configurable maximum volume: **150%, 200%, 250%, 300%, 400%, or 500%**.
 - **300%** is the default.
 - Normal 0-100% volume behavior is preserved.
@@ -41,4 +43,9 @@ Higher boost levels can distort already-loud sources. Use only as much boost as 
 
 ## Compatibility
 
-SeaBoost targets Seanime's Video Core volume controls and built-in HTML video player. If SeaBoost is updated while a video is already playing, restart playback before testing the new version so the media-audio graph can be rebuilt cleanly.
+SeaBoost supports Seanime's two built-in playback paths:
+
+- **VideoCore / HTML5 playback:** SeaBoost uses a Web Audio gain stage.
+- **MpvCore / torrent playback:** SeaBoost controls mpv's internal software volume and raises mpv's `volume-max` to the configured SeaBoost maximum.
+
+The MpvCore path is tied to Seanime's current MpvCore player structure, so a future Seanime player rewrite may require a SeaBoost compatibility update. If SeaBoost is updated while media is already playing, restart playback before testing the new version.
