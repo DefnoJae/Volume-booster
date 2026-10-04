@@ -1,6 +1,8 @@
 function init() {
   $ui.register((ctx) => {
     const BOOTSTRAP_ATTR = "data-seaboost-bootstrap";
+    const PLUGIN_VERSION = "0.3.0";
+    var pokeSerial = 0;
     var configuredMax = parseInt($getUserPreference("maxVolume") || "300", 10);
     if (!isFinite(configuredMax)) configuredMax = 300;
     configuredMax = Math.max(100, Math.min(500, configuredMax));
@@ -11,7 +13,7 @@ function init() {
         var doc = host && host.document;
         if (!host || !doc) return;
 
-        var VERSION = "0.2.3";
+        var VERSION = "0.3.0";
         var MARKER = "data-seaboost-native";
         var STYLE_ID = "seaboost-native-slider-style";
         var TRACK_CLASS = "sb-native-track";
@@ -49,8 +51,12 @@ function init() {
         var gainNode = null;
         var compressorNode = null;
         var bodyObserver = null;
+        var frameObserver = null;
         var mountQueued = false;
+        var mpvSyncTimer = null;
         var cleanupControl = null;
+        var currentMpvPlayer = null;
+        var activeEngine = "";
 
         function getVideo() {
           return doc.querySelector('video[data-vc-element="video"], video[data-video-core-element]');
@@ -62,6 +68,140 @@ function init() {
 
         function getSlider(control) {
           return control ? control.querySelector('[data-vc-element="control-volume-slider"]') : null;
+        }
+
+        function looksLikeMpvPlayer(value) {
+          return !!value &&
+            (typeof value === "object" || typeof value === "function") &&
+            typeof value.setProperty === "function" &&
+            (typeof value.setVolume === "function" || typeof value.runCommand === "function");
+        }
+
+        function getReactFiber(node) {
+          if (!node) return null;
+          var names = [];
+          try { names = Object.getOwnPropertyNames(node); } catch (_) {}
+          for (var i = 0; i < names.length; i++) {
+            if (
+              names[i].indexOf("__reactFiber$") === 0 ||
+              names[i].indexOf("__reactInternalInstance$") === 0
+            ) {
+              try { return node[names[i]] || null; } catch (_) { return null; }
+            }
+          }
+          return null;
+        }
+
+        function playerFromFiber(fiber) {
+          if (!fiber) return null;
+          var candidates = [fiber.memoizedProps, fiber.pendingProps, fiber.stateNode];
+          for (var i = 0; i < candidates.length; i++) {
+            var candidate = candidates[i];
+            if (looksLikeMpvPlayer(candidate)) return candidate;
+            if (candidate && looksLikeMpvPlayer(candidate.player)) return candidate.player;
+          }
+
+          var state = fiber.memoizedState;
+          var guard = 0;
+          while (state && guard < 16) {
+            if (looksLikeMpvPlayer(state.memoizedState)) return state.memoizedState;
+            if (state.memoizedState && looksLikeMpvPlayer(state.memoizedState.player)) {
+              return state.memoizedState.player;
+            }
+            state = state.next;
+            guard++;
+          }
+          return null;
+        }
+
+        function findMpvPlayer(force) {
+          if (!force && looksLikeMpvPlayer(currentMpvPlayer)) return currentMpvPlayer;
+
+          var container = doc.querySelector('[data-vc-element="container"]');
+          if (!container) return null;
+
+          var start = getReactFiber(container);
+          if (!start) {
+            var nodes = container.querySelectorAll("*");
+            for (var n = 0; n < nodes.length && n < 100; n++) {
+              start = getReactFiber(nodes[n]);
+              if (start) break;
+            }
+          }
+          if (!start) return null;
+
+          var parent = start;
+          for (var p = 0; parent && p < 16; p++) {
+            var parentPlayer = playerFromFiber(parent);
+            if (parentPlayer) {
+              currentMpvPlayer = parentPlayer;
+              return parentPlayer;
+            }
+            parent = parent.return;
+          }
+
+          var queue = [start];
+          var seen = typeof Set === "function" ? new Set() : null;
+          var checked = 0;
+
+          while (queue.length && checked < 1600) {
+            var fiber = queue.shift();
+            if (!fiber) continue;
+            if (seen) {
+              if (seen.has(fiber)) continue;
+              seen.add(fiber);
+            }
+            checked++;
+
+            var found = playerFromFiber(fiber);
+            if (found) {
+              currentMpvPlayer = found;
+              return found;
+            }
+
+            if (fiber.child) queue.push(fiber.child);
+            if (fiber.sibling) queue.push(fiber.sibling);
+          }
+
+          return null;
+        }
+
+        function ignorePromise(value) {
+          try {
+            if (value && typeof value.catch === "function") value.catch(function () {});
+          } catch (_) {}
+        }
+
+        function applyMpvPercent(percent, forceFind) {
+          var player = findMpvPlayer(!!forceFind);
+          if (!player) return false;
+
+          currentMpvPlayer = player;
+          try {
+            ignorePromise(player.setProperty("volume-max", maxVolume));
+            ignorePromise(player.setProperty("volume", percent));
+            return true;
+          } catch (_) {
+            try {
+              if (typeof player.setVolume === "function") {
+                ignorePromise(player.setVolume(percent));
+                return true;
+              }
+            } catch (_) {}
+          }
+          return false;
+        }
+
+        function readNativePercent(control) {
+          if (!control) return null;
+          var nativeProgress = control.querySelector('[data-vc-element="control-volume-slider-progress"]');
+          if (!nativeProgress) return null;
+          var raw = "";
+          try { raw = nativeProgress.style.width || ""; } catch (_) {}
+          var linearPercent = parseFloat(raw);
+          if (!isFinite(linearPercent)) return null;
+          var linear = Math.max(0, Math.min(1, linearPercent / 100));
+          return Math.round((linear * linear * 100) / VOLUME_STEP) * VOLUME_STEP;
         }
 
         function ensureStyle() {
@@ -278,29 +418,29 @@ function init() {
 
         function applyPercent(percent, shouldSave) {
           var video = getVideo();
-          if (!video) return;
+          var mpvPlayer = video ? null : findMpvPlayer(false);
+          if (!video && !mpvPlayer) return;
 
           percent = Math.max(0, Math.min(maxVolume, percent));
           percent = Math.round(percent / VOLUME_STEP) * VOLUME_STEP;
           percent = Math.max(0, Math.min(maxVolume, percent));
 
-          if (percent === currentPercent) {
-            if (shouldSave === true) savePercent();
-            updateProgress(percent);
-            return;
-          }
-
+          var changed = percent !== currentPercent;
           currentPercent = percent;
 
-          if (percent <= 100) {
-            setGain(1);
-            try { video.volume = percent / 100; } catch (_) {}
+          if (video) {
+            if (percent <= 100) {
+              setGain(1);
+              try { video.volume = percent / 100; } catch (_) {}
+            } else {
+              try { video.volume = 1; } catch (_) {}
+              setGain(percent / 100);
+            }
           } else {
-            try { video.volume = 1; } catch (_) {}
-            setGain(percent / 100);
+            applyMpvPercent(percent, false);
           }
 
-          if (shouldSave !== false) savePercent();
+          if (shouldSave === true || (changed && shouldSave !== false)) savePercent();
           updateProgress(percent);
         }
 
@@ -330,6 +470,21 @@ function init() {
           }
 
           applyPercent(currentPercent, false);
+        }
+
+        function attachMpvPlayer(player, control) {
+          if (!player) return false;
+          currentMpvPlayer = player;
+
+          if (!hasSavedPercent) {
+            var nativePercent = readNativePercent(control);
+            if (nativePercent !== null) currentPercent = nativePercent;
+            savePercent();
+          }
+
+          applyMpvPercent(currentPercent, false);
+          updateProgress(currentPercent);
+          return true;
         }
 
         function attachControl(control) {
@@ -438,13 +593,29 @@ function init() {
           flashReadout();
         }
 
-        function mount() {
-          var video = getVideo();
+        function mount(forceMpvFind) {
           var control = getNativeVolumeControl();
-          if (!video || !control) return false;
+          if (!control) return false;
 
-          if (currentVideo !== video || !currentVideoVolumeHandler) {
-            attachVideo(video);
+          var video = getVideo();
+          if (video) {
+            if (activeEngine !== "videocore") {
+              currentMpvPlayer = null;
+              activeEngine = "videocore";
+            }
+            if (currentVideo !== video || !currentVideoVolumeHandler) {
+              attachVideo(video);
+            }
+          } else {
+            if (activeEngine !== "mpvcore") {
+              if (currentVideo) resetAudioForNewVideo(null);
+              activeEngine = "mpvcore";
+              currentMpvPlayer = null;
+            }
+
+            var mpvPlayer = findMpvPlayer(!!forceMpvFind);
+            if (!mpvPlayer) return false;
+            attachMpvPlayer(mpvPlayer, control);
           }
 
           return attachControl(control);
@@ -460,23 +631,61 @@ function init() {
           });
         }
 
+        function queueMpvSync() {
+          if (mpvSyncTimer) return;
+          mpvSyncTimer = host.setTimeout(function () {
+            mpvSyncTimer = null;
+            currentMpvPlayer = null;
+            if (mount(true)) applyPercent(currentPercent, false);
+          }, 250);
+        }
+
+        function reapplyCurrentLevel() {
+          if (getVideo()) {
+            mount();
+            applyPercent(currentPercent, false);
+          } else {
+            queueMpvSync();
+          }
+        }
+
         host.addEventListener("keydown", onKeyDown, true);
 
         bodyObserver = new host.MutationObserver(function () {
-          var video = getVideo();
           var control = getNativeVolumeControl();
-          if (!video || !control) return;
+          if (!control) return;
 
+          var video = getVideo();
           var slider = getSlider(control);
-          var needsMount =
-            video !== currentVideo ||
+          var needsUiMount =
             control.getAttribute(MARKER) !== "1" ||
             !slider ||
             !slider.querySelector("." + TRACK_CLASS);
 
-          if (needsMount) queueMount();
+          if (video) {
+            if (video !== currentVideo || needsUiMount) queueMount();
+          } else {
+            if (needsUiMount) queueMpvSync();
+          }
         });
         if (doc.body) bodyObserver.observe(doc.body, { childList: true, subtree: true });
+
+        var frameElement = null;
+        try { frameElement = window.frameElement; } catch (_) {}
+        if (frameElement) {
+          frameObserver = new host.MutationObserver(function (mutations) {
+            for (var i = 0; i < mutations.length; i++) {
+              if (mutations[i].attributeName === "data-seaboost-poke") {
+                reapplyCurrentLevel();
+                break;
+              }
+            }
+          });
+          frameObserver.observe(frameElement, {
+            attributes: true,
+            attributeFilter: ["data-seaboost-poke"]
+          });
+        }
 
         host.__seaboost = {
           version: VERSION,
@@ -484,12 +693,19 @@ function init() {
           mount: mount,
           getLevel: function () { return currentPercent; },
           setLevel: function (value) { applyPercent(value, true); },
+          reapply: reapplyCurrentLevel,
           destroy: function () {
             host.removeEventListener("keydown", onKeyDown, true);
+            if (mpvSyncTimer) {
+              host.clearTimeout(mpvSyncTimer);
+              mpvSyncTimer = null;
+            }
             if (bodyObserver) { try { bodyObserver.disconnect(); } catch (_) {} }
+            if (frameObserver) { try { frameObserver.disconnect(); } catch (_) {} }
             if (cleanupControl) { try { cleanupControl(); } catch (_) {} }
             removeVideoVolumeHandler();
             resetAudioForNewVideo(null);
+            currentMpvPlayer = null;
           }
         };
 
@@ -507,10 +723,16 @@ function init() {
     async function ensureBootstrap() {
       try {
         var existing = await ctx.dom.queryOne("iframe[" + BOOTSTRAP_ATTR + "=\"1\"]");
-        if (existing) return;
+        if (existing) {
+          var existingVersion = await existing.getAttribute("data-seaboost-version");
+          if (existingVersion === PLUGIN_VERSION) return existing;
+          existing.remove();
+        }
 
         var frame = await ctx.dom.createElement("iframe");
         frame.setAttribute(BOOTSTRAP_ATTR, "1");
+        frame.setAttribute("data-seaboost-version", PLUGIN_VERSION);
+        frame.setAttribute("data-seaboost-poke", "0");
         frame.setAttribute("aria-hidden", "true");
         frame.setAttribute("tabindex", "-1");
         frame.setCssText("display:none!important;width:0!important;height:0!important;border:0!important;position:absolute!important;");
@@ -525,6 +747,7 @@ function init() {
             }
           } catch (_) {}
         }, 1400);
+        return frame;
       } catch (_) {
         try { ctx.toast.error("SeaBoost failed to initialize."); } catch (_) {}
       }
@@ -532,8 +755,17 @@ function init() {
 
     async function ensureIfPlayerExists() {
       try {
-        var video = await ctx.dom.queryOne('video[data-vc-element="video"]');
-        if (video) await ensureBootstrap();
+        var control = await ctx.dom.queryOne('[data-vc-element="control-volume"]');
+        if (control) await ensureBootstrap();
+      } catch (_) {}
+    }
+
+    async function pokeBootstrap() {
+      try {
+        var frame = await ensureBootstrap();
+        if (!frame) return;
+        pokeSerial++;
+        frame.setAttribute("data-seaboost-poke", String(pokeSerial));
       } catch (_) {}
     }
 
@@ -545,5 +777,16 @@ function init() {
     ctx.dom.observe('[data-vc-element="control-volume"]', (elements) => {
       if (elements && elements.length) ensureBootstrap();
     });
+
+    try {
+      if (ctx.videoCore && typeof ctx.videoCore.addEventListener === "function") {
+        ctx.videoCore.addEventListener("video-loaded", () => {
+          pokeBootstrap();
+        });
+        ctx.videoCore.addEventListener("video-loaded-metadata", () => {
+          pokeBootstrap();
+        });
+      }
+    } catch (_) {}
   });
 }
