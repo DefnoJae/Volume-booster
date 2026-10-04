@@ -1,11 +1,11 @@
 {
   "id": "SeaBoost",
   "name": "SeaBoost",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "manifestURI": "https://raw.githubusercontent.com/DefnoJae/Volume-booster/refs/heads/main/Manifest.json",
   "language": "typescript",
   "type": "plugin",
-  "description": "Extends Seanime's native volume control beyond 100% with a configurable maximum boost.",
+  "description": "Extends Seanime's native volume control beyond 100% with configurable boost for VideoCore, online streaming, and torrent/MpvCore playback.",
   "author": "Jae",
   "icon": "https://raw.githubusercontent.com/DefnoJae/Volume-booster/refs/heads/main/assets/iccon.png",
   "website": "https://github.com/DefnoJae/Volume-booster",
